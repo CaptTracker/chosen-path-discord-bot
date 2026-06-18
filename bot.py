@@ -31,6 +31,7 @@ EXTENSIONS = [
     "cogs.voice_stats",
     "cogs.mod_log",
     "cogs.log_events",
+    "cogs.tickets",
 ]
 
 
