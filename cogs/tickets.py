@@ -9,26 +9,22 @@ from .checks import mod_check, admin_check
 
 DB_PATH = os.getenv("DB_PATH", "bot_data.db")
 
-CATEGORIES = [
-    discord.SelectOption(label="General Support",   value="general", emoji="🦕", description="General questions and help"),
-    discord.SelectOption(label="Player Report",     value="report",  emoji="📋", description="Report a player for rule violations"),
-    discord.SelectOption(label="Ban Appeal",        value="appeal",  emoji="⚖️",  description="Appeal a ban or punishment"),
-    discord.SelectOption(label="Bug Report",        value="bug",     emoji="🐛", description="Report a bug or technical issue"),
-    discord.SelectOption(label="Staff Application", value="staff",   emoji="🌟", description="Apply for a staff position"),
-    discord.SelectOption(label="Other",             value="other",   emoji="❓", description="Anything else"),
-]
-
-CATEGORY_NAMES = {
-    "general": "🦕 General Support",
-    "report":  "📋 Player Report",
-    "appeal":  "⚖️ Ban Appeal",
-    "bug":     "🐛 Bug Report",
-    "staff":   "🌟 Staff Application",
-    "other":   "❓ Other",
+# Each top-level type maps to (display name, emoji, Discord server category name, description)
+TICKET_TYPES = {
+    "discord":     ("Discord Ticket",  "💬", "Discord Tickets",  "Server issues, user reports, role requests, general Discord help"),
+    "game":        ("Game Ticket",     "🎮", "Game Tickets",      "In-game issues, bug reports, game support, tribe help"),
+    "appeal":      ("Appeal",          "⚖️",  "Appeal Tickets",   "Appeal a ban, mute, timeout, or other punishment"),
+    "application": ("Application",     "📋", "Applications",      "Apply for staff, moderator, or other server roles"),
 }
 
+# Slash command choices list built from TICKET_TYPES
+_TICKET_CHOICES = [
+    app_commands.Choice(name=f"{data[1]} {data[0]}", value=key)
+    for key, data in TICKET_TYPES.items()
+]
 
-# ── Database helpers ─────────────────────────────────────────────────────────
+
+# ── Database ─────────────────────────────────────────────────────────────────
 
 async def _init_db():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -97,7 +93,7 @@ async def _has_open_ticket(guild_id: int, user_id: int) -> bool:
             return await cur.fetchone() is not None
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _role_ids() -> set[int]:
     ids: set[int] = set()
@@ -111,7 +107,32 @@ def _transcript_channel(guild: discord.Guild) -> discord.TextChannel | None:
     return discord.utils.get(guild.text_channels, name="ticket-transcripts")
 
 
-async def _make_channel(guild: discord.Guild, user: discord.Member, category: str, number: int) -> discord.TextChannel:
+def _display(ticket_type: str) -> str:
+    data = TICKET_TYPES.get(ticket_type)
+    return f"{data[1]} {data[0]}" if data else ticket_type
+
+
+def _server_category_name(ticket_type: str) -> str:
+    data = TICKET_TYPES.get(ticket_type)
+    return data[2] if data else "Tickets"
+
+
+async def _get_or_create_category(guild: discord.Guild, name: str) -> discord.CategoryChannel:
+    cat = discord.utils.get(guild.categories, name=name)
+    if cat:
+        return cat
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        guild.me: discord.PermissionOverwrite(view_channel=True, manage_channels=True),
+    }
+    for rid in _role_ids():
+        role = guild.get_role(rid)
+        if role:
+            overwrites[role] = discord.PermissionOverwrite(view_channel=True)
+    return await guild.create_category(name=name, overwrites=overwrites)
+
+
+async def _make_channel(guild: discord.Guild, user: discord.Member, ticket_type: str, number: int) -> discord.TextChannel:
     safe_name = user.display_name[:20].lower().replace(" ", "-")
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
@@ -131,12 +152,12 @@ async def _make_channel(guild: discord.Guild, user: discord.Member, category: st
                 view_channel=True, send_messages=True,
                 attach_files=True, manage_messages=True,
             )
-    ticket_cat = discord.utils.get(guild.categories, name="Tickets")
+    cat = await _get_or_create_category(guild, _server_category_name(ticket_type))
     return await guild.create_text_channel(
         name=f"ticket-{number:04d}-{safe_name}",
         overwrites=overwrites,
-        category=ticket_cat,
-        topic=f"Ticket #{number:04d} | {CATEGORY_NAMES.get(category, category)} | {user}",
+        category=cat,
+        topic=f"Ticket #{number:04d} | {_display(ticket_type)} | {user}",
     )
 
 
@@ -146,7 +167,7 @@ async def _generate_transcript(channel: discord.TextChannel, row) -> discord.Fil
         "=" * 60,
         "TICKET TRANSCRIPT",
         f"Ticket:   #{number:04d}",
-        f"Category: {CATEGORY_NAMES.get(category, category)}",
+        f"Type:     {_display(category)}",
         f"User ID:  {user_id}",
         f"Channel:  #{channel.name}",
         f"Opened:   {created_at}",
@@ -188,10 +209,10 @@ async def _do_close(interaction: discord.Interaction, row):
             color=discord.Color.dark_blue(),
             timestamp=datetime.datetime.now(datetime.timezone.utc),
         )
-        embed.add_field(name="Category",  value=CATEGORY_NAMES.get(category, category), inline=True)
+        embed.add_field(name="Type",      value=_display(category),            inline=True)
         embed.add_field(name="Opened by", value=f"<@{user_id}> (`{user_id}`)", inline=True)
-        embed.add_field(name="Closed by", value=interaction.user.mention, inline=True)
-        embed.add_field(name="Opened at", value=created_at, inline=True)
+        embed.add_field(name="Closed by", value=interaction.user.mention,      inline=True)
+        embed.add_field(name="Opened at", value=created_at,                    inline=True)
         await log_ch.send(embed=embed, file=transcript_file)
 
     await _close_ticket_db(channel_id)
@@ -213,42 +234,66 @@ async def _do_close(interaction: discord.Interaction, row):
         pass
 
 
-# ── Persistent views ─────────────────────────────────────────────────────────
+# ── Ticket open panel — 4 buttons, one per type ───────────────────────────────
+
+async def _open_ticket_for(interaction: discord.Interaction, ticket_type: str):
+    if await _has_open_ticket(interaction.guild.id, interaction.user.id):
+        await interaction.response.send_message(
+            "❌ You already have an open ticket. Please use your existing ticket channel.",
+            ephemeral=True,
+        )
+        return
+    await interaction.response.defer(ephemeral=True)
+    number  = await _next_number(interaction.guild.id)
+    channel = await _make_channel(interaction.guild, interaction.user, ticket_type, number)
+    await _save_ticket(interaction.guild.id, channel.id, interaction.user.id, ticket_type, number)
+
+    display = _display(ticket_type)
+    desc_map = {
+        "discord":     "Please describe your Discord-related issue and a staff member will assist you shortly.",
+        "game":        "Please describe your in-game issue in detail. Include your in-game name if relevant.",
+        "appeal":      "Please state what you were punished for, why you believe it was unjust, and any relevant context.",
+        "application": "Please introduce yourself, your experience, and why you'd like to join the team.",
+    }
+    embed = discord.Embed(
+        title=f"🎫 Ticket #{number:04d} — {display}",
+        description=f"Welcome, {interaction.user.mention}!\n\n{desc_map.get(ticket_type, 'A staff member will be with you shortly.')}",
+        color=discord.Color.blurple(),
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+    )
+    embed.add_field(name="Type",      value=display,                    inline=True)
+    embed.add_field(name="Opened by", value=interaction.user.mention,   inline=True)
+    embed.set_footer(text="Click Close Ticket when your issue is resolved.")
+    await channel.send(content=interaction.user.mention, embed=embed, view=TicketControlView())
+    await interaction.followup.send(f"✅ Ticket created: {channel.mention}", ephemeral=True)
+
 
 class TicketOpenView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(
-        label="Open a Ticket",
-        style=discord.ButtonStyle.green,
-        custom_id="ticket:open",
-        emoji="🎫",
-    )
-    async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if await _has_open_ticket(interaction.guild.id, interaction.user.id):
-            await interaction.response.send_message(
-                "❌ You already have an open ticket. Please use your existing ticket channel.",
-                ephemeral=True,
-            )
-            return
-        await interaction.response.send_message(
-            "Select a category for your ticket:",
-            view=CategoryView(),
-            ephemeral=True,
-        )
+    @discord.ui.button(label="Discord Ticket", style=discord.ButtonStyle.blurple, custom_id="ticket:discord", emoji="💬")
+    async def open_discord(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await _open_ticket_for(interaction, "discord")
+
+    @discord.ui.button(label="Game Ticket", style=discord.ButtonStyle.green, custom_id="ticket:game", emoji="🎮")
+    async def open_game(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await _open_ticket_for(interaction, "game")
+
+    @discord.ui.button(label="Appeal", style=discord.ButtonStyle.red, custom_id="ticket:appeal", emoji="⚖️")
+    async def open_appeal(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await _open_ticket_for(interaction, "appeal")
+
+    @discord.ui.button(label="Application", style=discord.ButtonStyle.gray, custom_id="ticket:application", emoji="📋")
+    async def open_application(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await _open_ticket_for(interaction, "application")
 
 
 class TicketControlView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(
-        label="Close Ticket",
-        style=discord.ButtonStyle.red,
-        custom_id="ticket:close",
-        emoji="🔒",
-    )
+    @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.red, custom_id="ticket:close", emoji="🔒")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         row = await _get_ticket(interaction.channel.id)
         if not row:
@@ -259,52 +304,6 @@ class TicketControlView(discord.ui.View):
             view=ConfirmCloseView(row),
             ephemeral=True,
         )
-
-
-# ── Ephemeral views (timeout is fine) ────────────────────────────────────────
-
-class CategorySelect(discord.ui.Select):
-    def __init__(self):
-        super().__init__(
-            placeholder="Choose a ticket category...",
-            min_values=1,
-            max_values=1,
-            options=CATEGORIES,
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        category = self.values[0]
-        await interaction.response.defer(ephemeral=True)
-
-        if await _has_open_ticket(interaction.guild.id, interaction.user.id):
-            await interaction.followup.send("❌ You already have an open ticket.", ephemeral=True)
-            return
-
-        number  = await _next_number(interaction.guild.id)
-        channel = await _make_channel(interaction.guild, interaction.user, category, number)
-        await _save_ticket(interaction.guild.id, channel.id, interaction.user.id, category, number)
-
-        cat_name = CATEGORY_NAMES.get(category, category)
-        embed = discord.Embed(
-            title=f"🎫 Ticket #{number:04d} — {cat_name}",
-            description=(
-                f"Welcome, {interaction.user.mention}! A staff member will be with you shortly.\n\n"
-                "Please describe your issue in as much detail as possible."
-            ),
-            color=discord.Color.blurple(),
-            timestamp=datetime.datetime.now(datetime.timezone.utc),
-        )
-        embed.add_field(name="Category",  value=cat_name,                 inline=True)
-        embed.add_field(name="Opened by", value=interaction.user.mention, inline=True)
-        embed.set_footer(text="Click Close Ticket when your issue is resolved.")
-        await channel.send(content=interaction.user.mention, embed=embed, view=TicketControlView())
-        await interaction.followup.send(f"✅ Ticket created: {channel.mention}", ephemeral=True)
-
-
-class CategoryView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=120)
-        self.add_item(CategorySelect())
 
 
 class ConfirmCloseView(discord.ui.View):
@@ -338,16 +337,14 @@ class Tickets(commands.Cog):
     @admin_check()
     async def ticket_panel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         embed = discord.Embed(
-            title="🦕 Support Tickets",
+            title="🦕 Open a Support Ticket",
             description=(
-                "Need help from our staff? Open a ticket below.\n\n"
-                "🦕 **General Support** — General questions and help\n"
-                "📋 **Player Report** — Report a player for rule violations\n"
-                "⚖️ **Ban Appeal** — Appeal a ban or punishment\n"
-                "🐛 **Bug Report** — Report a bug or technical issue\n"
-                "🌟 **Staff Application** — Apply for a staff position\n"
-                "❓ **Other** — Anything else\n\n"
-                "Click the button below to get started."
+                "Select the type of ticket that best matches your needs.\n\n"
+                "💬 **Discord Ticket** — Server issues, user reports, role requests, general Discord help\n"
+                "🎮 **Game Ticket** — In-game issues, bug reports, game support, tribe help\n"
+                "⚖️ **Appeal** — Appeal a ban, mute, timeout, or other punishment\n"
+                "📋 **Application** — Apply for staff, moderator, or other server roles\n\n"
+                "A staff member will respond as soon as possible."
             ),
             color=discord.Color.green(),
         )
@@ -364,17 +361,10 @@ class Tickets(commands.Cog):
         await interaction.response.send_message(f"✅ Ticket panel posted in {channel.mention}.", ephemeral=True)
 
     @app_commands.command(name="ticket", description="Open a ticket for a user")
-    @app_commands.describe(user="Member to open a ticket for", category="Ticket category")
-    @app_commands.choices(category=[
-        app_commands.Choice(name="🦕 General Support",   value="general"),
-        app_commands.Choice(name="📋 Player Report",     value="report"),
-        app_commands.Choice(name="⚖️ Ban Appeal",         value="appeal"),
-        app_commands.Choice(name="🐛 Bug Report",         value="bug"),
-        app_commands.Choice(name="🌟 Staff Application",  value="staff"),
-        app_commands.Choice(name="❓ Other",              value="other"),
-    ])
+    @app_commands.describe(user="Member to open a ticket for", category="Ticket type")
+    @app_commands.choices(category=_TICKET_CHOICES)
     @mod_check()
-    async def create_ticket(self, interaction: discord.Interaction, user: discord.Member, category: str = "general"):
+    async def create_ticket(self, interaction: discord.Interaction, user: discord.Member, category: str = "discord"):
         await interaction.response.defer(ephemeral=True)
 
         if await _has_open_ticket(interaction.guild.id, user.id):
@@ -385,19 +375,19 @@ class Tickets(commands.Cog):
         channel = await _make_channel(interaction.guild, user, category, number)
         await _save_ticket(interaction.guild.id, channel.id, user.id, category, number)
 
-        cat_name = CATEGORY_NAMES.get(category, category)
+        display = _display(category)
         embed = discord.Embed(
-            title=f"🎫 Ticket #{number:04d} — {cat_name}",
+            title=f"🎫 Ticket #{number:04d} — {display}",
             description=(
                 f"Welcome, {user.mention}! A staff member will be with you shortly.\n\n"
-                f"This ticket was opened by {interaction.user.mention}."
+                f"Opened by {interaction.user.mention}."
             ),
             color=discord.Color.blurple(),
             timestamp=datetime.datetime.now(datetime.timezone.utc),
         )
-        embed.add_field(name="Category",  value=cat_name,            inline=True)
-        embed.add_field(name="User",      value=user.mention,        inline=True)
-        embed.add_field(name="Opened by", value=interaction.user.mention, inline=True)
+        embed.add_field(name="Type",      value=display,                    inline=True)
+        embed.add_field(name="User",      value=user.mention,               inline=True)
+        embed.add_field(name="Opened by", value=interaction.user.mention,   inline=True)
         embed.set_footer(text="Click Close Ticket when resolved.")
         await channel.send(content=user.mention, embed=embed, view=TicketControlView())
         await interaction.followup.send(f"✅ Ticket created: {channel.mention}", ephemeral=True)
