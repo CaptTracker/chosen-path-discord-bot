@@ -5,8 +5,9 @@ import aiosqlite
 import datetime
 import os
 from .checks import admin_check
+from lib.log_channels import LOG_MOD
 
-DB_PATH = "bot_data.db"
+DB_PATH = os.getenv("DB_PATH", "bot_data.db")
 
 
 class ModLog(commands.Cog):
@@ -28,9 +29,9 @@ class ModLog(commands.Cog):
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute("SELECT channel_id FROM log_channels WHERE guild_id = ?", (guild.id,)) as cur:
                 row = await cur.fetchone()
-        if not row:
-            return None
-        return guild.get_channel(row[0])
+        if row:
+            return guild.get_channel(row[0])
+        return guild.get_channel(LOG_MOD)
 
     @commands.Cog.listener("on_mod_action")
     async def log_mod_action(self, guild: discord.Guild, action: str, target, moderator: discord.Member, reason: str):
@@ -52,31 +53,24 @@ class ModLog(commands.Cog):
         await channel.send(embed=embed)
 
     def _action_color(self, action: str) -> discord.Color:
-        action_lower = action.lower()
-        if "ban" in action_lower:
-            return discord.Color.red()
-        if "kick" in action_lower:
-            return discord.Color.orange()
-        if "warn" in action_lower:
-            return discord.Color.gold()
-        if "timeout" in action_lower and "remove" not in action_lower:
-            return discord.Color.yellow()
-        if "lock" in action_lower:
-            return discord.Color.dark_gray()
-        if "purge" in action_lower:
-            return discord.Color.dark_orange()
+        a = action.lower()
+        if "ban" in a:     return discord.Color.red()
+        if "kick" in a:    return discord.Color.orange()
+        if "warn" in a:    return discord.Color.gold()
+        if "timeout" in a and "remove" not in a: return discord.Color.yellow()
+        if "lock" in a:    return discord.Color.dark_gray()
+        if "purge" in a:   return discord.Color.dark_orange()
         return discord.Color.blurple()
 
     @commands.Cog.listener()
     async def on_member_ban(self, guild: discord.Guild, user: discord.User):
-        # Log bans that happen outside the bot (e.g. manual bans)
         channel = await self.get_log_channel(guild)
         if not channel:
             return
         await discord.utils.sleep_until(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=1))
         async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.ban):
             if entry.target.id == user.id and entry.user.id == self.bot.user.id:
-                return  # Already logged by our command
+                return
         embed = discord.Embed(title="📋 Mod Log — External Ban", color=discord.Color.dark_red(), timestamp=datetime.datetime.now(datetime.timezone.utc))
         embed.add_field(name="User", value=f"{user} (`{user.id}`)", inline=False)
         embed.set_footer(text="Banned outside of bot commands")
@@ -89,7 +83,7 @@ class ModLog(commands.Cog):
             return
         async for entry in member.guild.audit_logs(limit=1, action=discord.AuditLogAction.kick):
             if entry.target.id == member.id and entry.user.id == self.bot.user.id:
-                return  # Already logged by our command
+                return
             if entry.target.id == member.id:
                 embed = discord.Embed(title="📋 Mod Log — External Kick", color=discord.Color.dark_orange(), timestamp=datetime.datetime.now(datetime.timezone.utc))
                 embed.add_field(name="User", value=f"{member} (`{member.id}`)", inline=False)
@@ -97,8 +91,6 @@ class ModLog(commands.Cog):
                 embed.add_field(name="Reason", value=entry.reason or "No reason provided", inline=True)
                 await channel.send(embed=embed)
                 return
-
-    # ── Admin commands ──────────────────────────────────────────────────
 
     @app_commands.command(name="setlogchannel", description="Set the moderation log channel")
     @app_commands.describe(channel="The channel to send mod logs to")
@@ -118,7 +110,7 @@ class ModLog(commands.Cog):
         if channel:
             await interaction.response.send_message(f"📋 Current mod log channel: {channel.mention}", ephemeral=True)
         else:
-            await interaction.response.send_message("❌ No mod log channel set. Use `/setlogchannel` to configure one.", ephemeral=True)
+            await interaction.response.send_message("❌ No mod log channel configured.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

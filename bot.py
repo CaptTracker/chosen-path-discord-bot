@@ -30,6 +30,7 @@ EXTENSIONS = [
     "cogs.moderation",
     "cogs.voice_stats",
     "cogs.mod_log",
+    "cogs.log_events",
 ]
 
 
