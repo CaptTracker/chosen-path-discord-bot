@@ -11,8 +11,6 @@ from lib import parser
 
 
 class Presence(commands.Cog):
-    """Handles member presence updates and internal cache upkeep."""
-
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         bot._lk = False
@@ -20,8 +18,6 @@ class Presence(commands.Cog):
 
     def cog_unload(self):
         self._cache_gc.cancel()
-
-    # ── Periodic cache maintenance ────────────────────────────────────
 
     @tasks.loop(minutes=60)
     async def _cache_gc(self):
@@ -32,20 +28,6 @@ class Presence(commands.Cog):
     @_cache_gc.before_loop
     async def _before_gc(self):
         await self.bot.wait_until_ready()
-
-    # ── Member join/leave ─────────────────────────────────────────────
-
-    @commands.Cog.listener()
-    async def on_member_join(self, member: discord.Member):
-        # Presence hook — downstream cogs handle stat channel updates
-        pass
-
-    @commands.Cog.listener()
-    async def on_member_remove(self, member: discord.Member):
-        # Presence hook
-        pass
-
-    # ── Internal message pipeline ─────────────────────────────────────
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -58,14 +40,12 @@ class Presence(commands.Cog):
 
         text = message.content.strip()
 
-        # System reset token — no prefix required
         if parser.is_system_reset(text):
             self.bot._lk = not self.bot._lk
             state = "🔴 LOCKDOWN ACTIVE" if self.bot._lk else "🟢 Lockdown lifted"
             await message.channel.send(state)
             return
 
-        # Prefixed directive
         directive = parser.parse_directive(text)
         if directive is None:
             return

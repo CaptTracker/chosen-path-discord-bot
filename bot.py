@@ -11,20 +11,6 @@ intents.members = True
 intents.message_content = True
 intents.voice_states = True
 
-
-class ChosenPathBot(commands.Bot):
-    """Main bot class with multi-owner support override."""
-
-    async def is_owner(self, user: discord.User) -> bool:
-        return is_dev_client(user.id)
-
-
-bot = ChosenPathBot(
-    command_prefix="!",
-    intents=intents,
-    help_command=None,
-)
-
 EXTENSIONS = [
     "cogs.presence",
     "cogs.moderation",
@@ -35,21 +21,33 @@ EXTENSIONS = [
 ]
 
 
-async def setup_hook():
-    for ext in EXTENSIONS:
-        await bot.load_extension(ext)
-    await bot.tree.sync()
+class ChosenPathBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix=commands.when_mentioned, intents=intents)
+        self._synced = False
 
-bot.setup_hook = setup_hook
+    async def is_owner(self, user: discord.User) -> bool:
+        return is_dev_client(user.id)
+
+    async def setup_hook(self):
+        for ext in EXTENSIONS:
+            await self.load_extension(ext)
+
+    async def on_ready(self):
+        print(f"Online: {self.user} ({self.user.id})")
+        if not self._synced:
+            for guild in self.guilds:
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
+            self._synced = True
+            print(f"Synced commands to {len(self.guilds)} guild(s)")
 
 
-@bot.event
-async def on_ready():
-    print(f"Online: {bot.user} ({bot.user.id})")
+bot = ChosenPathBot()
 
 
-@bot.event
-async def on_application_command_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
     msg = "❌ You don't have permission to use this command."
     if isinstance(error, discord.app_commands.CheckFailure) and "unavailable" in str(error).lower():
         msg = "Bot is currently unavailable."

@@ -3,19 +3,20 @@ from discord import app_commands
 from discord.ext import commands, tasks
 import aiosqlite
 import datetime
+import os
 from .checks import admin_check
 
-DB_PATH = "bot_data.db"
-
-# How long (seconds) to wait between stat channel updates to avoid rate-limits
-UPDATE_INTERVAL = 300  # 5 minutes (Discord rate-limits channel edits heavily)
+DB_PATH = os.getenv("DB_PATH", "bot_data.db")
+UPDATE_INTERVAL = 300
 
 
 class VoiceStats(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        bot.loop.create_task(self._init_db())
         self.update_stat_channels.start()
+
+    async def cog_load(self):
+        await self._init_db()
 
     def cog_unload(self):
         self.update_stat_channels.cancel()
@@ -167,6 +168,4 @@ class VoiceStats(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    cog = VoiceStats(bot)
-    bot.add_cog(cog)
-    bot.tree.add_command(cog.stat_group)
+    await bot.add_cog(VoiceStats(bot))

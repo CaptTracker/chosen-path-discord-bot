@@ -13,7 +13,9 @@ DB_PATH = os.getenv("DB_PATH", "bot_data.db")
 class ModLog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        bot.loop.create_task(self._init_db())
+
+    async def cog_load(self):
+        await self._init_db()
 
     async def _init_db(self):
         async with aiosqlite.connect(DB_PATH) as db:

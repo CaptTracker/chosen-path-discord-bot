@@ -330,7 +330,9 @@ class Tickets(commands.Cog):
         self.bot = bot
         bot.add_view(TicketOpenView())
         bot.add_view(TicketControlView())
-        bot.loop.create_task(_init_db())
+
+    async def cog_load(self):
+        await _init_db()
 
     @app_commands.command(name="ticketpanel", description="Post the ticket panel in a channel")
     @app_commands.describe(channel="Channel to post the panel in")

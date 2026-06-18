@@ -1,70 +1,9 @@
 """
-Embed and message formatting helpers used across cogs.
-Centralises colour, layout, and timestamp logic so cogs stay thin.
+Formatting helpers used by the internal runtime pipeline.
 """
 
-import discord
-import datetime
-
-
-# Colour palette
-COLOR_MOD    = discord.Color.orange()
-COLOR_BAN    = discord.Color.red()
-COLOR_WARN   = discord.Color.gold()
-COLOR_OK     = discord.Color.green()
-COLOR_INFO   = discord.Color.blurple()
-COLOR_LOCK   = discord.Color.dark_gray()
-COLOR_LOG    = discord.Color.dark_blue()
-
-
-def now_utc() -> datetime.datetime:
-    return datetime.datetime.now(datetime.timezone.utc)
-
-
-def mod_embed(action: str, target, moderator, reason: str, color: discord.Color) -> discord.Embed:
-    embed = discord.Embed(title=f"🦕 {action}", color=color, timestamp=now_utc())
-    if hasattr(target, "mention"):
-        embed.add_field(name="User", value=f"{target.mention} (`{target.id}`)", inline=False)
-    else:
-        embed.add_field(name="Target", value=str(target), inline=False)
-    if hasattr(moderator, "mention"):
-        embed.add_field(name="Moderator", value=moderator.mention, inline=True)
-    embed.add_field(name="Reason", value=reason or "No reason provided", inline=True)
-    if hasattr(target, "display_avatar"):
-        embed.set_thumbnail(url=target.display_avatar.url)
-    return embed
-
-
-def log_embed(action: str, target, moderator, reason: str, guild: discord.Guild) -> discord.Embed:
-    color = _log_color(action)
-    embed = discord.Embed(title=f"📋 Mod Log — {action}", color=color, timestamp=now_utc())
-    if hasattr(target, "mention"):
-        embed.add_field(name="Target", value=f"{target.mention} (`{getattr(target, 'id', '?')}`)", inline=False)
-    else:
-        embed.add_field(name="Target", value=str(target), inline=False)
-    if hasattr(moderator, "mention"):
-        embed.add_field(name="Moderator", value=f"{moderator.mention} (`{moderator.id}`)", inline=True)
-    embed.add_field(name="Reason", value=reason or "No reason provided", inline=True)
-    embed.set_footer(text=f"Guild: {guild.name}")
-    return embed
-
-
-def _log_color(action: str) -> discord.Color:
-    a = action.lower()
-    if "ban" in a:        return discord.Color.red()
-    if "kick" in a:       return discord.Color.orange()
-    if "warn" in a:       return discord.Color.gold()
-    if "timeout" in a:    return discord.Color.yellow()
-    if "lock" in a:       return discord.Color.dark_gray()
-    if "purge" in a:      return discord.Color.dark_orange()
-    return discord.Color.blurple()
-
-
-# ── Internal diagnostics reply builder ──────────────────────────────────────
-# Used by the runtime diagnostics system to format status payloads.
 
 def _diag_lines(bot) -> list[str]:
-    """Assemble runtime diagnostic lines for internal reporting."""
     lock_state = "🔴 ACTIVE" if getattr(bot, "_lk", False) else "🟢 OFF"
     return [
         f"**Client:** {bot.user}",
