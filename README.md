@@ -1,7 +1,7 @@
 [SETUP.md](https://github.com/user-attachments/files/29115876/SETUP.md)
 # Chosen Path Bot — Setup Guide
 
-#Invite Link: https://discord.com/oauth2/authorize?client_id=1516882229425606868
+# Invite Link: https://discord.com/oauth2/authorize?client_id=1516882229425606868
 
 ## Requirements
 - Python 3.10+
